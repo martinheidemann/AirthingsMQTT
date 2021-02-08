@@ -1,3 +1,13 @@
+Fork comments and notes:
+==========
+
+This is another fork from the main project, regarding this ESP32 MQTT client for Airthings Wave BLE Radon sensors:
+
+The main objective is to support Airthings Wave Plus and the extra sensors: VOC, CO2 and Pressure.
+Based on the main project and using uuid's from the airthings wave plus script:
+
+https://github.com/Airthings/waveplus-reader
+
 Airthing MQTT Bridge via an ESP32
 ==========
 
