@@ -51,8 +51,11 @@
 // Topics for temperature and humidity.
 #define TOPIC_TEMPERATURE "stat/airthings/temperature"
 #define TOPIC_HUMIDITY "stat/airthings/humidity"
+#define TOPIC_PRESSURE "stat/airthings/pressure"
+#define TOPIC_VOC "stat/airthings/voc"
+#define TOPIC_CO2 "stat/airthings/co2"
 
-// Unlikely you'll need to chnage any of the settings below.
+// Unlikely you'll need to change any of the settings below.
 
 // The time to take between readings.  One hour has worked pretty well for me.  
 // Since the device only gives us the 24hr average, more frequent readings 
@@ -76,13 +79,15 @@
 #define DOT_PRINT_INTERVAL 50
 
 // The hard-coded uuid's airthings uses to advertise itself and its data.
-static BLEUUID serviceUUID("b42e1f6e-ade7-11e4-89d3-123b93f75cba");
-static BLEUUID charUUID("b42e01aa-ade7-11e4-89d3-123b93f75cba");
-static BLEUUID radon24UUID("b42e01aa-ade7-11e4-89d3-123b93f75cba");
-static BLEUUID radonLongTermUUID("b42e0a4c-ade7-11e4-89d3-123b93f75cba");
-static BLEUUID datetimeUUID((uint32_t)0x2A08);
-static BLEUUID temperatureUUID((uint32_t)0x2A6E);
-static BLEUUID humidityUUID((uint32_t)0x2A6F);
+static BLEUUID serviceUUID("b42e1c08-ade7-11e4-89d3-123b93f75cba");             // (Found in ??)
+static BLEUUID currentValuesUUID("b42e2a68-ade7-11e4-89d3-123b93f75cba");       // (Found in https://github.com/Airthings/waveplus-reader/blob/master/read_waveplus.py)
+
+int unpack(int data1, int data2) {
+  int value = data2;
+  value = value<<8;
+  value += data1;
+  return value;
+}
 
 bool getAndRecordReadings(BLEAddress pAddress) {
   Serial.println();
@@ -106,32 +111,84 @@ bool getAndRecordReadings(BLEAddress pAddress) {
   }
 
   // Get references to our characteristics
-  Serial.println("Reading radon/temperature/humidity...");
-  BLERemoteCharacteristic* temperatureCharacteristic = pRemoteService->getCharacteristic(temperatureUUID);
-  BLERemoteCharacteristic* humidityCharacteristic = pRemoteService->getCharacteristic(humidityUUID);
-  BLERemoteCharacteristic* radon24Characteristic = pRemoteService->getCharacteristic(radon24UUID);
-  BLERemoteCharacteristic* radonLongTermCharacteristic = pRemoteService->getCharacteristic(radonLongTermUUID);
-  
-  if (temperatureCharacteristic == nullptr ||
-      humidityCharacteristic == nullptr ||
-      radon24Characteristic == nullptr || 
-      radonLongTermCharacteristic == nullptr) {
+  Serial.println("Reading radon/temperature/humidity/pressure/CO2/VOC...");
+  BLERemoteCharacteristic* currentValuesCharacteristic = pRemoteService->getCharacteristic(currentValuesUUID);
+
+  if (currentValuesCharacteristic == nullptr) {
     Serial.print("Failed to read from the device!");
     return false;
   }
 
-  float temperature = ((short)temperatureCharacteristic->readUInt16()) / 100.0;
-  float humidity = humidityCharacteristic->readUInt16() / 100.0;
+  std::string data = currentValuesCharacteristic->readValue();
 
-  // The radon values are reported in terms of 
-  float radon = radon24Characteristic->readUInt16() / BECQUERELS_M2_TO_PICOCURIES_L;
-  float radonLongterm = radonLongTermCharacteristic->readUInt16() / BECQUERELS_M2_TO_PICOCURIES_L;
-  client->disconnect();
+  // Data format BBBBHHHHHHHH
+
+  //  0       - byte dataVersion;
+  //  1       - byte humidity;
+  //  2       - byte ambientLight;
+  //  3       - byte waves;
+  //  4 +  5  - int radon;
+  //  6 +  7  - int radonLongTerm;
+  //  8 +  9  - int temperature;
+  // 10 + 11  - int pressure;
+  // 12 + 13  - int co2;
+  // 14 + 15  - int voc;
+
+  float val;
+  Serial.print("Data version: ");
+  Serial.println(data[0], DEC);
   
-  Serial.printf("Temperature: %f\n", temperature);
-  Serial.printf("Humidity: %f\n", humidity);
-  Serial.printf("Radon 24hr average: %f\n", radon);
-  Serial.printf("Radon Lifetime average: %f\n", radonLongterm);
+  Serial.print("Humidity: ");
+  val = data[1];
+  val /= 2.0;
+  int humidity = val;
+  Serial.println(humidity, DEC);
+
+  Serial.print("Radon: ");
+  int radon = unpack(data[4], data[5]);
+
+  if ((radon <= 0) || (radon > 16383)) {
+     radon = 0;
+  }
+
+  Serial.println(radon, DEC);
+
+  Serial.print("Radon long term: ");
+  int radonLongterm = unpack(data[6], data[7]);
+
+  if ((radonLongterm <= 0) || (radonLongterm > 16383)) {
+     radonLongterm = 0;
+  }
+
+  Serial.println(radonLongterm, DEC);
+
+  Serial.print("Temperature: ");
+  val = unpack(data[8], data[9]);
+  val /= 100;
+  int temperature = val;
+  Serial.println(temperature, DEC);
+
+  Serial.print("Pressure: ");
+  val = unpack(data[10], data[11]);
+  val /= 50;
+  int pressure = val;
+  Serial.println(pressure, DEC);
+
+  Serial.print("CO2: ");
+  int co2 = unpack(data[12], data[13]);
+  Serial.println(co2, DEC);
+
+  Serial.print("VOC: ");
+  int voc = unpack(data[14], data[15]);
+  Serial.println(voc, DEC);
+
+  client->disconnect();
+
+  Serial.printf("So far so good");
+  //Serial.printf("Temperature: %f\n", temperature);
+  //Serial.printf("Humidity: %f\n", humidity);
+  //Serial.printf("Radon 24hr average: %f\n", radon);
+  //Serial.printf("Radon Lifetime average: %f\n", radonLongterm);
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() < start + CONNECT_WAIT_SECONDS * SECONDS_TO_MILLIS) {
@@ -143,7 +200,6 @@ bool getAndRecordReadings(BLEAddress pAddress) {
     return false;
   }
 
-  
   // Connect and publish to MQTT.
   WiFiClient espClient;
   PubSubClient mqtt(espClient);
@@ -152,7 +208,10 @@ bool getAndRecordReadings(BLEAddress pAddress) {
       !mqtt.publish(TOPIC_RADON_24HR, String(radon).c_str()) ||
       !mqtt.publish(TOPIC_RADON_LIFETIME, String(radonLongterm).c_str()) ||
       !mqtt.publish(TOPIC_TEMPERATURE, String(temperature).c_str()) ||
-      !mqtt.publish(TOPIC_HUMIDITY, String(humidity).c_str())) {
+      !mqtt.publish(TOPIC_HUMIDITY, String(humidity).c_str()) ||
+      !mqtt.publish(TOPIC_PRESSURE, String(pressure).c_str()) ||
+      !mqtt.publish(TOPIC_VOC, String(voc).c_str()) ||
+      !mqtt.publish(TOPIC_CO2, String(co2).c_str())) {
     Serial.println("Unable to connect/publish to mqtt server.");
     return false;
   }
